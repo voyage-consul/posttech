@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Papa from 'papaparse';
 import {
   Users, UserCheck, TrendingUp, TrendingDown,
-  Info, Table, Loader2, RefreshCw, Edit3, LogOut
+  Info, Table, Loader2, RefreshCw, Edit3, LogOut,
+  Calendar, Filter, ChevronDown
 } from 'lucide-react';
 import {
   Bar, XAxis, YAxis, CartesianGrid, Legend,
@@ -169,6 +170,8 @@ export default function App() {
   const [periodType, setPeriodType] = useState<'month' | 'week' | 'day'>('week');
   const [isEditing, setIsEditing] = useState(false);
   const [scenarioTab, setScenarioTab] = useState<'A' | 'B'>('A');
+  const [dateRangeFilter, setDateRangeFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all');
   const [page, setPage] = useState(1);
   const ROWS_PER_PAGE = 50;
 
@@ -202,7 +205,7 @@ export default function App() {
     if (!data.length) return null;
 
     // 前処理（パーサー）
-    const items = data.map(row => {
+    let items = data.map(row => {
       const addedDate = parseDate(row['友だち追加日時'] || row['流入日時(新規)']);
       return {
         ...row,
@@ -212,6 +215,43 @@ export default function App() {
         _day: formatDay(addedDate),
       };
     }).filter(r => r._addedDate); // 日付がないものは除外（エラー行防止）
+
+    // フィルタリング適用 (期間)
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    
+    if (dateRangeFilter !== 'all') {
+      items = items.filter(r => {
+        const d = r._addedDate;
+        if (!d) return false;
+        
+        if (dateRangeFilter === 'this_month') {
+          return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
+        }
+        if (dateRangeFilter === 'last_month') {
+          const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          return d.getFullYear() === lastMonth.getFullYear() && d.getMonth() === lastMonth.getMonth();
+        }
+        if (dateRangeFilter === 'last_7_days') {
+          const sevenDaysAgo = new Date(today);
+          sevenDaysAgo.setDate(today.getDate() - 7);
+          return d >= sevenDaysAgo;
+        }
+        if (dateRangeFilter === 'last_30_days') {
+          const thirtyDaysAgo = new Date(today);
+          thirtyDaysAgo.setDate(today.getDate() - 30);
+          return d >= thirtyDaysAgo;
+        }
+        return true;
+      });
+    }
+
+    // フィルタリング適用 (流入経路)
+    if (sourceFilter !== 'all') {
+      items = items.filter(r => hasTag(r[sourceFilter]));
+    }
+
+    const availableSources = Object.keys(data[0] || {}).filter(k => k.startsWith('【流入経路】') || k.includes('流入経路_'));
 
     // 総登録、アクティブ
     const totalCount = items.length; // ブロックカラムがないためアクティブ一致
@@ -267,10 +307,11 @@ export default function App() {
       prevPeriodData,
       latestRegCount, prevRegCount,
       changeLabel,
-      calcChange
+      calcChange,
+      availableSources
     };
 
-  }, [data, periodType]);
+  }, [data, periodType, dateRangeFilter, sourceFilter]);
 
   if (loading) {
     return (
@@ -292,7 +333,7 @@ export default function App() {
 
   if (!dashboardData) return null;
 
-  const { totalCount, activeCount, cv1Count, cv2Count, periodDataList, changeLabel, calcChange, latestPeriodData, prevPeriodData } = dashboardData;
+  const { totalCount, activeCount, cv1Count, cv2Count, periodDataList, changeLabel, calcChange, latestPeriodData, prevPeriodData, availableSources } = dashboardData;
 
   const cv1Rate = activeCount ? ((cv1Count / activeCount) * 100) : 0;
   const cv2Rate = activeCount ? ((cv2Count / activeCount) * 100) : 0;
@@ -326,11 +367,71 @@ export default function App() {
         <div>
           <h1 className="text-[24px] font-semibold text-[#000] tracking-tight">{CONFIG.TITLE}</h1>
           <p className="text-sm text-[#666] mt-1 flex items-center gap-2">
-            有効データ: {data.length}件
+            有効データ: {activeCount}件 / 全データ: {totalCount}件
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex bg-[#f2f2f2] rounded-lg p-1">
+        
+        <div className="flex flex-wrap items-center gap-3">
+          {/* 追加: 期間フィルター */}
+          <div className="relative group/filter">
+            <div className="flex items-center gap-2 bg-[#0067b8] text-white px-3 py-2 rounded-lg cursor-pointer text-sm font-semibold">
+              <Calendar size={16} />
+              <span>
+                {dateRangeFilter === 'this_month' ? '今月' :
+                 dateRangeFilter === 'last_month' ? '先月' :
+                 dateRangeFilter === 'last_7_days' ? '過去7日間' :
+                 dateRangeFilter === 'last_30_days' ? '過去30日間' : '全期間'}
+              </span>
+              <ChevronDown size={14} className="ml-1" />
+            </div>
+            <div className="absolute top-full left-0 mt-1 bg-white border border-[#f2f2f2] rounded-lg shadow-lg py-1 w-40 hidden group-hover/filter:block z-50">
+              {[
+                { val: 'all', label: '全期間' },
+                { val: 'this_month', label: '今月' },
+                { val: 'last_month', label: '先月' },
+                { val: 'last_7_days', label: '過去7日間' },
+                { val: 'last_30_days', label: '過去30日間' }
+              ].map(opt => (
+                <button
+                  key={opt.val}
+                  onClick={() => setDateRangeFilter(opt.val)}
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-[#f2f2f2] transition-colors ${dateRangeFilter === opt.val ? 'font-bold text-[#0067b8]' : 'text-[#000]'}`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 追加: 流入経路フィルター */}
+          <div className="relative group/filter-source">
+            <div className="flex items-center gap-2 bg-white border border-[#d2d2d2] px-3 py-2 rounded-lg cursor-pointer text-sm font-semibold">
+              <Filter size={16} className="text-[#666]" />
+              <span>
+                {sourceFilter === 'all' ? '全流入経路' : sourceFilter.replace('【流入経路】', '').replace('流入経路_', '')}
+              </span>
+              <ChevronDown size={14} className="ml-1 text-[#666]" />
+            </div>
+            <div className="absolute top-full right-0 mt-1 bg-white border border-[#f2f2f2] rounded-lg shadow-lg py-1 w-56 hidden group-hover/filter-source:block z-50 max-h-64 overflow-y-auto">
+              <button
+                onClick={() => setSourceFilter('all')}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-[#f2f2f2] transition-colors ${sourceFilter === 'all' ? 'font-bold text-[#0067b8]' : 'text-[#000]'}`}
+              >
+                全流入経路
+              </button>
+              {availableSources.map((src: string) => (
+                <button
+                  key={src}
+                  onClick={() => setSourceFilter(src)}
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-[#f2f2f2] transition-colors ${sourceFilter === src ? 'font-bold text-[#0067b8]' : 'text-[#000]'}`}
+                >
+                  {src.replace('【流入経路】', '').replace('流入経路_', '')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex bg-[#f2f2f2] rounded-lg p-1 ml-2">
             {['month', 'week', 'day'].map((pt) => {
               const labels: Record<string, string> = { month: '月次', week: '週次', day: '日次' };
               return (
