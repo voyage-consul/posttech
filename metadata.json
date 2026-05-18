@@ -1,0 +1,8 @@
+{
+  "name": "LINE Marketing Dashboard",
+  "description": "LINEマーケティングのファネル分析・可視化ダッシュボード",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
