@@ -16,6 +16,10 @@ import {
 const CONFIG = {
   TITLE: 'ポスティングHD LINEダッシュボード',
   CSV_URL: 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRfQ1RZ9t9PrVhly7wZdjy4z8y8H4GFzWEI-I-x1BaA5qHlLojO6dhB45kKyhx9rLIrxqD3r-9A2s_H/pub?gid=45431142&single=true&output=csv',
+  SHEET_URL: 'https://docs.google.com/spreadsheets/d/1sAY6UFkk63w-gmhD5L5kchFfm-1-O8fpg_FSV7dgSUo/edit?gid=45431142#gid=45431142',
+  PROXY_URL: 'https://line-dashboard-proxy.raspy-wood-9b0d.workers.dev',
+  GOOGLE_CLIENT_ID: '813216912152-hf6cden86ijta1qjc67uvscdlhmi85sl.apps.googleusercontent.com',
+  SHEET_NAME: '並び替え後のCSV',
 };
 // ============================================
 
@@ -152,9 +156,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-function fetchSheetData() {
+function fetchViaCSV(csvUrl: string) {
   return new Promise<any[]>((resolve, reject) => {
-    Papa.parse(CONFIG.CSV_URL, {
+    Papa.parse(csvUrl, {
       download: true, header: true, skipEmptyLines: true,
       transformHeader: (h) => h.trim(),
       complete: (r) => resolve(r.data), error: (e) => reject(e)
@@ -162,10 +166,78 @@ function fetchSheetData() {
   });
 }
 
+async function fetchViaProxy() {
+  const token = localStorage.getItem('google_id_token');
+  const res = await fetch(`${CONFIG.PROXY_URL}/sheets`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body: JSON.stringify({ sheetId: getSheetId(CONFIG.SHEET_URL), sheetName: CONFIG.SHEET_NAME })
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('google_id_token');
+    window.location.reload();
+    return [];
+  }
+  if (res.status === 403) throw new Error('アクセス権がありません。スプレッドシートの共有設定を管理者に確認してください。');
+  const json = await res.json();
+  if (!json.rows || !json.headers) throw new Error('プロキシのレスポンス形式が不正です');
+  return json.rows.map((row: any[]) => {
+    const o: Record<string, any> = {};
+    json.headers.forEach((h: string, i: number) => { o[h] = row[i] || '' });
+    return o;
+  });
+}
+
+const isDeployed = window.location.hostname.includes('github.io');
+
+async function fetchSheetData() {
+  if (isDeployed) return await fetchViaProxy();
+  if (CONFIG.CSV_URL) return await fetchViaCSV(CONFIG.CSV_URL);
+  return await fetchViaProxy();
+}
+
+const LoginScreen = ({ onLogin }: { onLogin: (t: string) => void }) => {
+  const loginRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const renderButton = () => {
+      if ((window as any).google && loginRef.current) {
+        (window as any).google.accounts.id.initialize({
+          client_id: CONFIG.GOOGLE_CLIENT_ID,
+          callback: (response: any) => {
+            localStorage.setItem('google_id_token', response.credential);
+            onLogin(response.credential);
+          },
+        });
+        (window as any).google.accounts.id.renderButton(loginRef.current, {
+          theme: 'outline', size: 'large', width: 300,
+        });
+      }
+    };
+
+    if ((window as any).google) {
+      renderButton();
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.onload = renderButton;
+    document.head.appendChild(script);
+  }, [onLogin]);
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen">
+      <h1 className="text-[24px] font-semibold mb-8">{CONFIG.TITLE}</h1>
+      <div ref={loginRef}></div>
+    </div>
+  );
+};
+
 export default function App() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState<string | null>(localStorage.getItem('google_id_token'));
   
   const [periodType, setPeriodType] = useState<'month' | 'week' | 'day'>('week');
   const [isEditing, setIsEditing] = useState(false);
@@ -176,8 +248,12 @@ export default function App() {
   const ROWS_PER_PAGE = 50;
 
   useEffect(() => {
+    if (isDeployed && !token) {
+      setLoading(false);
+      return;
+    }
     loadData();
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     if (isEditing) {
@@ -312,6 +388,10 @@ export default function App() {
     };
 
   }, [data, periodType, dateRangeFilter, sourceFilter]);
+
+  if (isDeployed && !token) {
+    return <LoginScreen onLogin={setToken} />;
+  }
 
   if (loading) {
     return (
@@ -451,6 +531,11 @@ export default function App() {
           <button onClick={loadData} className="p-2 rounded-lg bg-[#f2f2f2] text-[#666] hover:bg-[#e2e2e2] transition-colors">
             <IconComp name="refresh-cw" size={18} />
           </button>
+          {isDeployed && (
+            <button onClick={() => { localStorage.removeItem('google_id_token'); window.location.reload(); }} className="p-2 rounded-lg text-[#d13438] hover:bg-[#fde7e9]">
+              <IconComp name="log-out" size={18} />
+            </button>
+          )}
         </div>
       </div>
       
