@@ -172,12 +172,22 @@ async function fetchViaProxy() {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
     body: JSON.stringify({ sheetId: getSheetId(CONFIG.SHEET_URL), sheetName: CONFIG.SHEET_NAME })
   });
+  
   if (res.status === 401) {
     localStorage.removeItem('google_id_token');
     window.location.reload();
     return [];
   }
-  if (res.status === 403) throw new Error('アクセス権がありません。スプレッドシートの共有設定を管理者に確認してください。');
+  
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    if (res.status === 403) {
+      throw new Error(`アクセス権がありません。スプレッドシートの共有設定を管理者に確認してください。 (詳細: ${errText || '情報なし'})`);
+    } else {
+      throw new Error(`サーバーエラーが発生しました。ステータス: ${res.status} (詳細: ${errText || '情報なし'})`);
+    }
+  }
+  
   const json = await res.json();
   if (!json.rows || !json.headers) throw new Error('プロキシのレスポンス形式が不正です');
   return json.rows.map((row: any[]) => {
